@@ -4,7 +4,7 @@ pub struct ClassFile {
     pub magic: u32,
     pub major_version: u16,
     pub minor_version: u16,
-    pub constant_pool_count: [u8; 2],
+    pub constant_pool_count: u16,
     pub constant_pool: Vec<CpInfo>,
     pub access_flags: [u8; 2],
     pub this_class: [u8; 2],
@@ -40,26 +40,25 @@ pub enum ConstantPoolType {
         string_idx: u16,
     },
     ConstantInteger {
-        bytes: [u8; 4],
+        value: i32,
     },
     ConstantFloat {
-        bytes: [u8; 4],
+        value: f32,
     },
     ConstantLong {
-        hi_bytes: [u8; 4],
-        low_bytes: [u8; 4],
+        value: i64,
     },
     ConstantDouble {
-        hi_bytes: [u8; 4],
-        low_bytes: [u8; 4],
+        value: f64,
     },
     ConstantNameAndType {
         name_idx: u16,
         desc_idx: u16,
     },
     ConstantUtf8 {
-        len: u16,
-        bytes: Vec<u8>,
+        // TODO: do we need to keep len?
+        len: u16, // the number of bytes to read in the class file  (not the length of the resulting string).
+        value: String,
     },
     ConstantMethodHandle {
         ref_kind: u8,
@@ -86,8 +85,8 @@ pub enum ConstantPoolType {
 
 #[derive(Debug, Default)]
 pub struct CpInfo {
-    tag: u8,
-    info: Option<ConstantPoolType>,
+    pub tag: u8,
+    pub info: Option<ConstantPoolType>,
 }
 
 #[derive(Debug, Default)]
