@@ -4,6 +4,8 @@ mod decompile;
 mod types;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::init();
+
     let args: Vec<_> = env::args().collect();
     if args.len() != 2 {
         println!("Usage: {} <classfile>", args[0]);

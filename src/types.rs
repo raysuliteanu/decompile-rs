@@ -6,16 +6,16 @@ pub struct ClassFile {
     pub minor_version: u16,
     pub constant_pool_count: u16,
     pub constant_pool: Vec<CpInfo>,
-    pub access_flags: [u8; 2],
-    pub this_class: [u8; 2],
-    pub super_class: [u8; 2],
-    pub interfaces_count: [u8; 2],
+    pub access_flags: u16,
+    pub this_class: u16,
+    pub super_class: u16,
+    pub interfaces_count: u16,
     pub interfaces: Vec<u8>,
-    pub fields_count: [u8; 2],
+    pub fields_count: u16,
     pub fields: Vec<FieldInfo>,
-    pub methods_count: [u8; 2],
+    pub methods_count: u16,
     pub methods: Vec<MethodInfo>,
-    pub attributes_count: [u8; 2],
+    pub attributes_count: u16,
     pub attributes: Vec<AttributeInfo>,
 }
 
@@ -94,11 +94,12 @@ pub struct FieldAccessFlags {}
 
 #[derive(Debug, Default)]
 pub struct FieldInfo {
-    access_flags: FieldAccessFlags,
-    name_index: u16,
-    descriptor_index: u16,
-    attributes_count: u16,
-    attributes: Vec<AttributeInfo>,
+    // pub access_flags: FieldAccessFlags,
+    pub access_flags: u16,
+    pub name_index: u16,
+    pub descriptor_index: u16,
+    pub attributes_count: u16,
+    pub attributes: Vec<AttributeInfo>,
 }
 
 #[derive(Debug, Default)]
@@ -106,16 +107,17 @@ pub struct MethodAccessFlags {}
 
 #[derive(Debug, Default)]
 pub struct MethodInfo {
-    access_flags: MethodAccessFlags,
-    name_index: u16,
-    descriptor_index: u16,
-    attributes_count: u16,
-    attributes: Vec<AttributeInfo>,
+    // pub access_flags: MethodAccessFlags,
+    pub access_flags: u16,
+    pub name_index: u16,
+    pub descriptor_index: u16,
+    pub attributes_count: u16,
+    pub attributes: Vec<AttributeInfo>,
 }
 
 #[derive(Debug, Default)]
 pub struct AttributeInfo {
-    attribute_name_index: u16,
-    attribute_length: u32,
-    info: Vec<u8>,
+    pub attribute_name_index: u16,
+    pub attribute_length: u32,
+    pub info: Vec<u8>,
 }
