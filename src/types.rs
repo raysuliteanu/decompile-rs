@@ -19,20 +19,29 @@ pub struct ClassFile {
     pub attributes: Vec<AttributeInfo>,
 }
 
+impl ClassFile {
+    pub(crate) fn new(magic: u32) -> Self {
+        ClassFile {
+            magic,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ConstantPoolType {
     ConstantClass {
         name_idx: u16,
     },
-    ConstantFieldref {
+    ConstantFieldRef {
         class_index: u16,
         name_and_type_idx: u16,
     },
-    ConstantMethodref {
+    ConstantMethodRef {
         class_index: u16,
         name_and_type_idx: u16,
     },
-    ConstantInterfaceMethodref {
+    ConstantInterfaceMethodRef {
         class_index: u16,
         name_and_type_idx: u16,
     },

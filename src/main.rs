@@ -1,26 +1,26 @@
-use std::{env, error::Error, path::PathBuf};
+use clap::Parser;
+use std::path::PathBuf;
 
 mod decompile;
+mod error;
 mod types;
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[derive(Debug, Parser)]
+struct Cli {
+    file: PathBuf,
+}
+
+fn main() {
     env_logger::init();
 
-    let args: Vec<_> = env::args().collect();
-    if args.len() != 2 {
-        println!("Usage: {} <classfile>", args[0]);
-        // todo: return error
-        return Ok(());
+    let args = Cli::parse();
+
+    let mut dec = decompile::Decompile::new(args.file)
+        .map_err(|e| eprintln!("{}", e))
+        .unwrap();
+
+    if let Err(e) = dec.decompile() {
+        eprintln!("{}", e);
+        std::process::exit(1);
     }
-
-    let path = PathBuf::from(&args[1]);
-    if !path.exists() {
-        todo!();
-    }
-
-    let mut file = std::fs::File::open(path)?;
-    let mut dec = decompile::Decompile::new(&mut file);
-    dec.decompile()?;
-
-    Ok(())
 }
