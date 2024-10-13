@@ -16,7 +16,7 @@ pub struct ClassFile {
     pub methods_count: u16,
     pub methods: Vec<MethodInfo>,
     pub attributes_count: u16,
-    pub attributes: Vec<AttributeInfo>,
+    pub attributes: Vec<Attribute>,
 }
 
 impl ClassFile {
@@ -25,6 +25,10 @@ impl ClassFile {
             magic,
             ..Self::default()
         }
+    }
+
+    pub(crate) fn get_constant_pool_entry(&self, index: usize) -> Option<&CpInfo> {
+        self.constant_pool.get(index)
     }
 }
 
@@ -105,10 +109,15 @@ pub struct FieldAccessFlags {}
 pub struct FieldInfo {
     // pub access_flags: FieldAccessFlags,
     pub access_flags: u16,
-    pub name_index: u16,
-    pub descriptor_index: u16,
-    pub attributes_count: u16,
-    pub attributes: Vec<AttributeInfo>,
+    /*
+        pub name_index: u16,
+        pub descriptor_index: u16,
+        pub attributes_count: u16,
+    */
+    pub name: String,
+    pub descriptor: String,
+    pub value: String,
+    pub attributes: Vec<Attribute>,
 }
 
 #[derive(Debug, Default)]
@@ -121,12 +130,411 @@ pub struct MethodInfo {
     pub name_index: u16,
     pub descriptor_index: u16,
     pub attributes_count: u16,
-    pub attributes: Vec<AttributeInfo>,
+    pub attributes: Vec<Attribute>,
 }
 
-#[derive(Debug, Default)]
-pub struct AttributeInfo {
-    pub attribute_name_index: u16,
-    pub attribute_length: u32,
-    pub info: Vec<u8>,
+// https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7
+#[derive(Debug)]
+pub enum Attribute {
+    //https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.2
+    ConstantValue {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        constant_value_index: u16,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.3
+    Code {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        max_stack: u16,
+        max_locals: u16,
+        code_length: u32,
+        code: Vec<u8>,
+        exception_table_length: u16,
+        exception_table: Vec<ExceptionTable>,
+        attributes_count: u16,
+        attributes: Vec<Attribute>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.4
+    StackMapTable {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        number_of_entries: u16,
+        entries: Vec<StackMapFrame>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.5
+    Exceptions {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        number_of_exceptions: u16,
+        exception_index_table: Vec<u16>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.6
+    InnerClasses {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        number_of_classes: u16,
+        classes: Vec<InnerClassInfo>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.7
+    EnclosingMethod {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        class_index: u16,
+        method_index: u16,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.8
+    Synthetic {
+        attribute_name_index: u16,
+        attribute_length: u32,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.9
+    Signature {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        signature_index: u16,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.10
+    SourceFile {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        sourcefile_index: u16,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.11
+    SourceDebugExtension {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        debug_extension: Vec<u8>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.12
+    LineNumberTable {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        line_number_table_length: u16,
+        line_number_table: Vec<LineNumberTableEntry>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.13
+    LocalVariableTable {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        local_variable_table_length: u16,
+        local_variable_table: Vec<LocalVariableTableEntry>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.14
+    LocalVariableTypeTable {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        local_variable_type_table_length: u16,
+        local_variable_type_table: Vec<LocalVariableTypeTableEntry>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.15
+    Deprecated {
+        attribute_name_index: u16,
+        attribute_length: u32,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.16
+    RuntimeVisibleAnnotations {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        num_annotations: u16,
+        annotations: Vec<Annotation>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.17
+    RuntimeInvisibleAnnotations {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        num_annotations: u16,
+        annotations: Vec<Annotation>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.18
+    RuntimeVisibleParameterAnnotations {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        num_parameters: u8,
+        parameter_annotations: Vec<Annotation>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.19
+    RuntimeInvisibleParameterAnnotations {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        num_parameters: u8,
+        parameter_annotations: Vec<Annotation>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.20
+    RuntimeVisibleTypeAnnotations {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        num_annotations: u16,
+        annotations: Vec<TypeAnnotation>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.21
+    RuntimeInvisibleTypeAnnotations {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        num_annotations: u16,
+        annotations: Vec<TypeAnnotation>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.22
+    AnnotationDefault {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        default_value: ElementValue,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.23
+    BootstrapMethods {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        num_bootstrap_methods: u16,
+        bootstrap_methods: Vec<BootstrapMethod>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.24
+    MethodParameters {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        parameters_count: u8,
+        parameters: Vec<MethodParameter>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.25
+    Module {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        module_name_index: u16,
+        module_flags: u16,
+        module_version_index: u16,
+        requires_count: u16,
+        requires: Vec<ModuleRequirement>,
+        exports_count: u16,
+        exports: Vec<ModuleExport>,
+        opens_count: u16,
+        opens: Vec<ModuleOpens>,
+        uses_count: u16,
+        uses_index: Vec<u16>,
+        provides_count: u16,
+        provides: Vec<ModuleProvides>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.26
+    ModulePackages {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        package_count: u16,
+        package_index: Vec<u16>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.27
+    ModuleMainClass {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        main_class_index: u16,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.28
+    NestHost {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        host_class_index: u16,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.29
+    NestMembers {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        number_of_classes: u16,
+        classes: Vec<u16>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.30
+    Record {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        component_count: u16,
+        components: Vec<RecordComponentInfo>,
+    },
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.31
+    PermittedSubclasses {
+        attribute_name_index: u16,
+        attribute_length: u32,
+        number_of_classes: u16,
+        classes: Vec<u16>,
+    },
+}
+
+#[derive(Debug)]
+struct RecordComponentInfo {
+    name_index: u16,
+    descriptor_index: u16,
+    attributes_count: u16,
+    attributes: Vec<Attribute>,
+}
+
+#[derive(Debug)]
+struct ModuleProvides {
+    provides_index: u16,
+    provides_with_count: u16,
+    provides_with_index: Vec<u16>,
+}
+
+#[derive(Debug)]
+struct ModuleOpens {
+    opens_index: u16,
+    opens_flags: u16,
+    opens_to_count: u16,
+    opens_to_index: Vec<u16>,
+}
+
+#[derive(Debug)]
+struct ModuleRequirement {
+    requires_index: u16,
+    requires_flags: u16,
+    requires_version_index: u16,
+}
+
+#[derive(Debug)]
+struct ModuleExport {
+    exports_index: u16,
+    exports_flags: u16,
+    exports_to_count: u16,
+    exports_to_index: Vec<u16>,
+}
+
+#[derive(Debug)]
+struct MethodParameter {
+    name_index: u16,
+    access_flags: u16,
+}
+
+#[derive(Debug)]
+struct BootstrapMethod {
+    bootstrap_method_ref: u16,
+    num_bootstrap_arguments: u16,
+    bootstrap_arguments: Vec<u16>,
+}
+
+#[derive(Debug)]
+struct TypeAnnotation {
+    target_type: u8,
+    target_info: TargetInfo,
+    target_path: TypePath,
+    type_index: u16,
+    num_element_value_pairs: u16,
+    element_value_pairs: Vec<AnnotationElementPair>,
+}
+
+// https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.20.1
+#[derive(Debug)]
+enum TargetInfo {
+    TypeParameter(u8),
+    SuperType(u16),
+    TypeParameterBound {
+        type_parameter_index: u8,
+        bound_index: u8,
+    },
+    Empty,
+    FormalParameter(u8),
+    Throws(u16),
+    LocalVar {
+        table_length: u16,
+        table: Vec<LocalVarTable>,
+    },
+    Catch(u16),
+    Offset(u16),
+    TypeArgument {
+        offset: u16,
+        type_argument_index: u8,
+    },
+}
+
+#[derive(Debug)]
+struct LocalVarTable {
+    start_pc: u16,
+    length: u16,
+    index: u16,
+}
+
+// https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.20.2
+#[derive(Debug)]
+struct TypePath {
+    path_length: u8,
+    path: Vec<TypePathElement>,
+}
+
+#[derive(Debug)]
+struct TypePathElement {
+    type_path_kind: u8,
+    type_argument_index: u8,
+}
+
+#[derive(Debug)]
+struct Annotation {
+    type_index: u16,
+    num_element_value_pairs: u16,
+    element_value_pairs: Vec<AnnotationElementPair>,
+}
+
+#[derive(Debug)]
+struct AnnotationElementPair {
+    element_name_index: u16,
+    value: ElementValue,
+}
+
+// https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.16.1
+#[derive(Debug)]
+enum ElementValue {
+    ConstValueIndex(u16),
+    EnumConstantValue {
+        type_name_index: u16,
+        const_name_index: u16,
+    },
+    ClassInfoIndex(u16),
+    AnnotationValue(Annotation),
+    ArrayValue {
+        num_values: u16,
+        values: Vec<ElementValue>,
+    },
+}
+
+#[derive(Debug)]
+struct LocalVariableTypeTableEntry {
+    start_pc: u16,
+    length: u16,
+    name_index: u16,
+    signature_index: u16,
+    index: u16,
+}
+
+#[derive(Debug)]
+struct LocalVariableTableEntry {
+    start_pc: u16,
+    length: u16,
+    name_index: u16,
+    descriptor_index: u16,
+    index: u16,
+}
+
+#[derive(Debug)]
+struct LineNumberTableEntry {
+    start_pc: u16,
+    line_number: u16,
+}
+
+#[derive(Debug)]
+struct InnerClassInfo {
+    inner_class_info_index: u16,
+    outer_class_info_index: u16,
+    inner_name_index: u16,
+    inner_class_access_flags: u16,
+}
+
+#[derive(Debug)]
+enum StackMapFrame {
+    SameFrame,
+    SameLocals1StackItemFrame,
+    SameLocals1StackItemFrameExtended,
+    ChopFrame,
+    SameFrameExtended,
+    AppendFrame,
+    FullFrame,
+}
+
+#[derive(Debug)]
+pub struct ExceptionTable {
+    start_pc: u16,
+    end_pc: u16,
+    handler_pc: u16,
+    catch_type: u16,
 }

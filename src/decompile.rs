@@ -1,10 +1,11 @@
 use crate::error::DecompileError;
 use crate::error::DecompileError::{InvalidMagicNumber, NoSuchFile};
 use crate::types::{
-    AttributeInfo, ClassFile, ConstantPoolType, CpInfo, FieldAccessFlags, FieldInfo,
-    MethodAccessFlags, MethodInfo,
+    Attribute, ClassFile, ConstantPoolType, CpInfo, FieldAccessFlags, FieldInfo, MethodAccessFlags,
+    MethodInfo,
 };
 use log::{debug, trace};
+use std::arch::x86_64::__cpuid_count;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
@@ -107,7 +108,7 @@ impl Decompile {
                 20 => ConstantPoolType::ConstantPackage {
                     name_idx: read_u16(&mut reader),
                 },
-                _ => panic!("invalid cp_info tag: {cp_info_tag}"), // todo: or return error?
+                _ => return Err(DecompileError::InvalidClassPoolTag(cp_info_tag)),
             };
 
             let info = CpInfo {
@@ -140,18 +141,23 @@ impl Decompile {
         class_file.fields_count = read_u16(&mut reader);
 
         for _ in 0..class_file.fields_count {
-            class_file.fields.push(read_field_info(&mut reader));
+            class_file
+                .fields
+                .push(read_field_info(&mut reader, &class_file));
         }
 
         class_file.methods_count = read_u16(&mut reader);
 
         for _ in 0..class_file.methods_count {
-            class_file.methods.push(read_method_info(&mut reader));
+            class_file
+                .methods
+                .push(read_method_info(&mut reader, &class_file));
         }
 
         trace!("class file: {:?}", class_file);
 
         // TODO: validate class file e.g. indexes into constant pool are valid
+        // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.8
 
         // TODO: print disassembly
 
@@ -160,6 +166,8 @@ impl Decompile {
 }
 
 fn utf8(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
+    trace!("utf8()");
+
     let len = read_u16(reader);
     let bytes = read_variable(reader, len as usize);
     let value = std::str::from_utf8(&bytes).unwrap().to_string();
@@ -167,8 +175,17 @@ fn utf8(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
     Ok(ConstantPoolType::ConstantUtf8 { len, value })
 }
 
+fn integer(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
+    trace!("integer()");
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    let value = i32::from_be_bytes(buf);
+
+    Ok(ConstantPoolType::ConstantInteger { value })
+}
+
 fn long(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
-    // long
+    trace!("long()");
     let mut buf = [0u8; 8];
     reader.read_exact(&mut buf)?;
     let value = i64::from_be_bytes(buf);
@@ -176,17 +193,8 @@ fn long(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
     Ok(ConstantPoolType::ConstantLong { value })
 }
 
-fn double(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
-    // double
-    let mut buf = [0u8; 8];
-    reader.read_exact(&mut buf)?;
-    let value = f64::from_be_bytes(buf);
-
-    Ok(ConstantPoolType::ConstantDouble { value })
-}
-
 fn float(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
-    // float
+    trace!("float()");
     let mut buf = [0u8; 4];
     reader.read_exact(&mut buf)?;
     let value = f32::from_be_bytes(buf);
@@ -194,73 +202,142 @@ fn float(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
     Ok(ConstantPoolType::ConstantFloat { value })
 }
 
-fn integer(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
-    let mut buf = [0u8; 4];
-    let _ = reader.read_exact(&mut buf).map_err(|_| {
-        Err::<ConstantPoolType, DecompileError>(DecompileError::InvalidInputFile(todo!("get path")))
-    });
+fn double(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
+    trace!("double()");
+    let mut buf = [0u8; 8];
+    reader.read_exact(&mut buf)?;
+    let value = f64::from_be_bytes(buf);
 
-    let value = i32::from_be_bytes(buf);
-
-    Ok(ConstantPoolType::ConstantInteger { value })
+    Ok(ConstantPoolType::ConstantDouble { value })
 }
 
 fn read_u8(reader: &mut BufReader<File>) -> u8 {
+    trace!("read_utf8()");
     let mut buf = [0u8; 1];
     reader.read_exact(&mut buf).expect("invalid class file"); // todo: better error
     u8::from_be_bytes(buf)
 }
 
-fn read_u32(reader: &mut BufReader<File>) -> u32 {
-    let mut buf = [0u8; 4];
-    reader.read_exact(&mut buf).expect("invalid class file"); // todo: better error
-    u32::from_be_bytes(buf)
-}
-
 fn read_u16(reader: &mut BufReader<File>) -> u16 {
+    trace!("read_u16()");
     let mut buf = [0u8; 2];
     reader.read_exact(&mut buf).expect("invalid class file"); // todo: better error
     u16::from_be_bytes(buf)
 }
 
+fn read_u32(reader: &mut BufReader<File>) -> u32 {
+    trace!("read_u32()");
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf).expect("invalid class file"); // todo: better error
+    u32::from_be_bytes(buf)
+}
+
 fn read_variable(reader: &mut BufReader<File>, len: usize) -> Vec<u8> {
+    trace!("read_variable({len})");
     let mut buf = vec![0; len];
     reader.read_exact(&mut buf).expect("invalid class file"); // todo: better error
     buf
 }
 
-fn read_attribute_info(reader: &mut BufReader<File>) -> AttributeInfo {
-    let index = read_u16(reader);
-    let length = read_u32(reader);
-
-    AttributeInfo {
-        attribute_name_index: index,
-        attribute_length: length,
-        info: read_variable(reader, length as usize),
-    }
-}
-fn read_field_info(reader: &mut BufReader<File>) -> FieldInfo {
+fn read_field_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> FieldInfo {
+    trace!("read_field_info()");
     let access_flags = read_u16(reader);
     let name_index = read_u16(reader);
     let descriptor_index = read_u16(reader);
     let attributes_count = read_u16(reader);
 
-    let mut field_info = FieldInfo {
+    let field_name =
+        if let Some(name_info) = class_file.get_constant_pool_entry(name_index as usize) {
+            if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &name_info.info {
+                value.clone()
+            } else {
+                todo!("invalid class file error");
+            }
+        } else {
+            todo!("invalid class file error");
+        };
+
+    let field_descriptor =
+        if let Some(desc_info) = class_file.get_constant_pool_entry(descriptor_index as usize) {
+            if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &desc_info.info {
+                value.clone()
+            } else {
+                todo!("invalid class file error");
+            }
+        } else {
+            todo!("invalid class file error");
+        };
+
+    let (attribute_name_index, attribute_length, constant_value_index) =
+        (read_u16(reader), read_u32(reader), read_u16(reader));
+
+    // attribute_length
+    //     The value of the attribute_length item must be two.
+    assert_eq!(attribute_length, 2);
+
+    // attribute_name_index
+    //     The value of the attribute_name_index item must be a valid index into the constant_pool table.
+    //     The constant_pool entry at that index must be a CONSTANT_Utf8_info structure (§4.4.7)
+    //     representing the string "ConstantValue".
+    let constant_value =
+        if let Some(cp_info) = class_file.constant_pool.get(attribute_name_index as usize) {
+            if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &cp_info.info {
+                value.clone()
+            } else {
+                todo!("invalid class file error");
+            }
+        } else {
+            todo!("invalid class file error");
+        };
+
+    assert_eq!(constant_value, "ConstantValue".to_string());
+
+    // constantvalue_index
+    //     The value of the constantvalue_index item must be a valid index into the constant_pool
+    //     table. The constant_pool entry at that index gives the value represented by this attribute.
+    //     The constant_pool entry must be of a type appropriate to the field,
+    let value =
+        if let Some(cp_info) = &class_file.get_constant_pool_entry(constant_value_index as usize) {
+            // TODO: validate type against descriptor
+            match &cp_info.info {
+                Some(ConstantPoolType::ConstantDouble { value }) => format!("{value}"),
+                Some(ConstantPoolType::ConstantFloat { value }) => format!("{value}"),
+                Some(ConstantPoolType::ConstantLong { value }) => format!("{value}"),
+                Some(ConstantPoolType::ConstantInteger { value }) => format!("{value}"),
+                Some(ConstantPoolType::ConstantString { string_idx }) => {
+                    if let Some(info) = class_file.get_constant_pool_entry(*string_idx as usize) {
+                        if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &info.info {
+                            value.clone()
+                        } else {
+                            todo!("")
+                        }
+                    } else {
+                        todo!("")
+                    }
+                }
+                _ => todo!("invalid"),
+            }
+        } else {
+            todo!("")
+        };
+
+    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.2
+    // -->  There may be at most one ConstantValue attribute in the attributes table of a field_info structure.
+    FieldInfo {
         access_flags,
-        name_index,
-        descriptor_index,
-        attributes_count,
-        attributes: vec![],
-    };
-
-    for _ in 0..attributes_count {
-        field_info.attributes.push(read_attribute_info(reader));
+        name: field_name,
+        descriptor: field_descriptor,
+        value,
+        attributes: vec![Attribute::ConstantValue {
+            attribute_name_index,
+            attribute_length,
+            constant_value_index,
+        }],
     }
-
-    field_info
 }
 
-fn read_method_info(reader: &mut BufReader<File>) -> MethodInfo {
+fn read_method_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> MethodInfo {
+    trace!("read_method_info()");
     let access_flags = read_u16(reader);
     let name_index = read_u16(reader);
     let descriptor_index = read_u16(reader);
@@ -275,8 +352,21 @@ fn read_method_info(reader: &mut BufReader<File>) -> MethodInfo {
     };
 
     for _ in 0..attributes_count {
-        method_info.attributes.push(read_attribute_info(reader));
+        method_info
+            .attributes
+            .push(read_attribute_info(reader, class_file));
     }
 
     method_info
+}
+
+fn read_attribute_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> Attribute {
+    let index = read_u16(reader);
+    let length = read_u32(reader);
+
+    Attribute::ConstantValue {
+        attribute_name_index: index,
+        attribute_length: length,
+        constant_value_index: 0,
+    }
 }

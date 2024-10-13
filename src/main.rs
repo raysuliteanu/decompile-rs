@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 mod decompile;
 mod error;
@@ -10,7 +11,7 @@ struct Cli {
     file: PathBuf,
 }
 
-fn main() {
+fn main() -> ExitCode {
     env_logger::init();
 
     let args = Cli::parse();
@@ -21,6 +22,8 @@ fn main() {
 
     if let Err(e) = dec.decompile() {
         eprintln!("{}", e);
-        std::process::exit(1);
+        return ExitCode::FAILURE;
     }
+
+    ExitCode::SUCCESS
 }

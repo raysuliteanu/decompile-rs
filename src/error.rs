@@ -10,4 +10,6 @@ pub enum DecompileError {
     IOError(#[from] std::io::Error),
     #[error("no such file: {0}")]
     NoSuchFile(PathBuf),
+    #[error("invalid cp_info tag: {0}")]
+    InvalidClassPoolTag(u8),
 }
