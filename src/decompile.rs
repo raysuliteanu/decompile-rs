@@ -5,7 +5,6 @@ use crate::types::{
     MethodInfo,
 };
 use log::{debug, trace};
-use std::arch::x86_64::__cpuid_count;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
@@ -46,17 +45,10 @@ impl Decompile {
             class_file.major_version, class_file.minor_version
         );
 
-        // constant pool is indexed starting at 1 so put in a dummy at index 0
-        // See https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.1
-        // constant_pool[]
-        //      "The constant_pool table is indexed from 1 to constant_pool_count - 1."
-        class_file.constant_pool.push(CpInfo { tag: 0, info: None });
-
         class_file.constant_pool_count = read_u16(&mut reader);
 
         debug!("constant pool count: {}", class_file.constant_pool_count);
 
-        // -1 because see comment above
         for _ in 0..class_file.constant_pool_count - 1 {
             let cp_info_tag = read_u8(&mut reader);
             let cp_info_type = match cp_info_tag {
@@ -108,7 +100,10 @@ impl Decompile {
                 20 => ConstantPoolType::ConstantPackage {
                     name_idx: read_u16(&mut reader),
                 },
-                _ => return Err(DecompileError::InvalidClassPoolTag(cp_info_tag)),
+                _ => {
+                    debug!("class_file: {class_file}");
+                    return Err(DecompileError::InvalidClassPoolTag(cp_info_tag));
+                }
             };
 
             let info = CpInfo {
@@ -118,12 +113,12 @@ impl Decompile {
 
             debug!("adding {:?}", info);
 
-            class_file.constant_pool.push(info);
+            class_file.add_constant_pool_entry(info);
         }
 
         debug!(
             "read {} constant pool items",
-            class_file.constant_pool.len()
+            class_file.get_constant_pool_size()
         );
 
         class_file.access_flags = read_u16(&mut reader);
@@ -244,7 +239,7 @@ fn read_field_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> Fiel
     let access_flags = read_u16(reader);
     let name_index = read_u16(reader);
     let descriptor_index = read_u16(reader);
-    let attributes_count = read_u16(reader);
+    let _attributes_count = read_u16(reader);
 
     let field_name =
         if let Some(name_info) = class_file.get_constant_pool_entry(name_index as usize) {
@@ -280,7 +275,7 @@ fn read_field_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> Fiel
     //     The constant_pool entry at that index must be a CONSTANT_Utf8_info structure (§4.4.7)
     //     representing the string "ConstantValue".
     let constant_value =
-        if let Some(cp_info) = class_file.constant_pool.get(attribute_name_index as usize) {
+        if let Some(cp_info) = class_file.get_constant_pool_entry(attribute_name_index as usize) {
             if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &cp_info.info {
                 value.clone()
             } else {
@@ -360,7 +355,7 @@ fn read_method_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> Met
     method_info
 }
 
-fn read_attribute_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> Attribute {
+fn read_attribute_info(reader: &mut BufReader<File>, _class_file: &ClassFile) -> Attribute {
     let index = read_u16(reader);
     let length = read_u32(reader);
 

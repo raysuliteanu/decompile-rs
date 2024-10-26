@@ -1,11 +1,15 @@
+use std::fmt::Display;
+use std::fmt::Write;
+
 /// see https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.1
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct ClassFile {
     pub magic: u32,
     pub major_version: u16,
     pub minor_version: u16,
     pub constant_pool_count: u16,
-    pub constant_pool: Vec<CpInfo>,
+    constant_pool: ConstantPool,
     pub access_flags: u16,
     pub this_class: u16,
     pub super_class: u16,
@@ -19,6 +23,40 @@ pub struct ClassFile {
     pub attributes: Vec<Attribute>,
 }
 
+#[derive(Debug, Default)]
+pub struct ConstantPool {
+    cp_info: Vec<CpInfo>,
+}
+
+impl ConstantPool {
+    fn push(&mut self, cp_info: CpInfo) {
+        self.cp_info.push(cp_info)
+    }
+
+    fn len(&self) -> usize {
+        self.cp_info.len()
+    }
+
+    fn get(&self, idx: usize) -> Option<&CpInfo> {
+        self.cp_info.get(idx)
+    }
+}
+
+impl Display for ConstantPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self
+            .cp_info
+            .iter()
+            .enumerate()
+            .fold(String::new(), |mut s, (i, v)| {
+                let _ = writeln!(s, "idx: {} entry: {{ {v} }}", i + 1);
+                s
+            });
+
+        write!(f, "{s}")
+    }
+}
+
 impl ClassFile {
     pub(crate) fn new(magic: u32) -> Self {
         ClassFile {
@@ -27,11 +65,32 @@ impl ClassFile {
         }
     }
 
+    pub(crate) fn add_constant_pool_entry(&mut self, cp_info: CpInfo) {
+        self.constant_pool.push(cp_info);
+    }
+
+    pub(crate) fn get_constant_pool_size(&self) -> usize {
+        self.constant_pool.len()
+    }
+
+    // See https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.1
+    // constant_pool[]
+    //      "The constant_pool table is indexed from 1 to constant_pool_count - 1."
     pub(crate) fn get_constant_pool_entry(&self, index: usize) -> Option<&CpInfo> {
-        self.constant_pool.get(index)
+        self.constant_pool.get(index - 1)
     }
 }
 
+impl Display for ClassFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "magic: {:x}\nversion: {}.{}\ncp_count: {}\ncp: [\n{}\n]\naccess_flags: {:x}\nthis_class: {}",
+            self.magic, self.major_version, self.minor_version, self.constant_pool_count, self.constant_pool, self.access_flags, self.this_class
+        )?;
+        writeln!(f, "")
+    }
+}
+
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum ConstantPoolType {
     ConstantClass {
@@ -96,15 +155,85 @@ pub enum ConstantPoolType {
     },
 }
 
+impl Display for ConstantPoolType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstantPoolType::ConstantClass { name_idx } => write!(f, "Class: {name_idx}"),
+            ConstantPoolType::ConstantFieldRef {
+                class_index,
+                name_and_type_idx,
+            } => write!(
+                f,
+                "FieldRef: class {class_index}\tname_and_type: {name_and_type_idx}"
+            ),
+            ConstantPoolType::ConstantMethodRef {
+                class_index,
+                name_and_type_idx,
+            } => write!(
+                f,
+                "MethodRef: class {class_index}\tname_and_type: {name_and_type_idx}"
+            ),
+            ConstantPoolType::ConstantInterfaceMethodRef {
+                class_index,
+                name_and_type_idx,
+            } => write!(
+                f,
+                "InterfaceMethodRef: class {class_index}\tname_and_type: {name_and_type_idx}"
+            ),
+            ConstantPoolType::ConstantString { string_idx } => write!(f, "String: {string_idx}"),
+            ConstantPoolType::ConstantInteger { value } => write!(f, "Integer: {value}"),
+            ConstantPoolType::ConstantFloat { value } => write!(f, "Float: {value}"),
+            ConstantPoolType::ConstantLong { value } => write!(f, "Long: {value}"),
+            ConstantPoolType::ConstantDouble { value } => write!(f, "Double: {value}"),
+            ConstantPoolType::ConstantNameAndType { name_idx, desc_idx } => {
+                write!(f, "NameAndType: name({name_idx}) desc({desc_idx})")
+            }
+            ConstantPoolType::ConstantUtf8 { len, value } => {
+                write!(f, "Utf8: len({len}) value(\"{value}\")")
+            }
+            ConstantPoolType::ConstantMethodHandle { ref_kind, ref_idx } => {
+                write!(f, "MethodHandle: kind({ref_kind}) idx({ref_idx}")
+            }
+            ConstantPoolType::ConstantMethodType { desc_idx } => {
+                write!(f, "MethodType: desc({desc_idx})")
+            }
+            ConstantPoolType::ConstantDynamic {
+                bootstrap_method_attr_index,
+                name_and_type_index,
+            } => write!(f, "Dynamic: bootstrap_method_attr({bootstrap_method_attr_index}) name_and_type({name_and_type_index})"),
+            ConstantPoolType::ConstantInvokeDynamic {
+                bootstrap_method_attr_index,
+                name_and_type_index,
+            } => write!(f, "InvokeDynamic: bootstrap_method_attr({bootstrap_method_attr_index}) name_and_type({name_and_type_index})"),
+            ConstantPoolType::ConstantModule { name_idx } => write!(f, "Module: {name_idx}"),
+            ConstantPoolType::ConstantPackage { name_idx } => write!(f, "Package: {name_idx}"),
+        }
+    }
+}
+
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct CpInfo {
     pub tag: u8,
     pub info: Option<ConstantPoolType>,
 }
 
+impl Display for CpInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let info = if let Some(cp_type) = &self.info {
+            format!("{cp_type}")
+        } else {
+            "None".to_string()
+        };
+
+        write!(f, "tag: {} info: {{ {info} }}", self.tag)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct FieldAccessFlags {}
 
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct FieldInfo {
     // pub access_flags: FieldAccessFlags,
@@ -123,6 +252,7 @@ pub struct FieldInfo {
 #[derive(Debug, Default)]
 pub struct MethodAccessFlags {}
 
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct MethodInfo {
     // pub access_flags: MethodAccessFlags,
@@ -134,6 +264,7 @@ pub struct MethodInfo {
 }
 
 // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum Attribute {
     //https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.2
@@ -354,59 +485,67 @@ pub enum Attribute {
     },
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct RecordComponentInfo {
+pub struct RecordComponentInfo {
     name_index: u16,
     descriptor_index: u16,
     attributes_count: u16,
     attributes: Vec<Attribute>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct ModuleProvides {
+pub struct ModuleProvides {
     provides_index: u16,
     provides_with_count: u16,
     provides_with_index: Vec<u16>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct ModuleOpens {
+pub struct ModuleOpens {
     opens_index: u16,
     opens_flags: u16,
     opens_to_count: u16,
     opens_to_index: Vec<u16>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct ModuleRequirement {
+pub struct ModuleRequirement {
     requires_index: u16,
     requires_flags: u16,
     requires_version_index: u16,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct ModuleExport {
+pub struct ModuleExport {
     exports_index: u16,
     exports_flags: u16,
     exports_to_count: u16,
     exports_to_index: Vec<u16>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct MethodParameter {
+pub struct MethodParameter {
     name_index: u16,
     access_flags: u16,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct BootstrapMethod {
+pub struct BootstrapMethod {
     bootstrap_method_ref: u16,
     num_bootstrap_arguments: u16,
     bootstrap_arguments: Vec<u16>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct TypeAnnotation {
+pub struct TypeAnnotation {
     target_type: u8,
     target_info: TargetInfo,
     target_path: TypePath,
@@ -416,8 +555,9 @@ struct TypeAnnotation {
 }
 
 // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.20.1
+#[allow(dead_code)]
 #[derive(Debug)]
-enum TargetInfo {
+pub enum TargetInfo {
     TypeParameter(u8),
     SuperType(u16),
     TypeParameterBound {
@@ -439,42 +579,48 @@ enum TargetInfo {
     },
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct LocalVarTable {
+pub struct LocalVarTable {
     start_pc: u16,
     length: u16,
     index: u16,
 }
 
 // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.20.2
+#[allow(dead_code)]
 #[derive(Debug)]
-struct TypePath {
+pub struct TypePath {
     path_length: u8,
     path: Vec<TypePathElement>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct TypePathElement {
+pub struct TypePathElement {
     type_path_kind: u8,
     type_argument_index: u8,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct Annotation {
+pub struct Annotation {
     type_index: u16,
     num_element_value_pairs: u16,
     element_value_pairs: Vec<AnnotationElementPair>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct AnnotationElementPair {
+pub struct AnnotationElementPair {
     element_name_index: u16,
     value: ElementValue,
 }
 
 // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.16.1
+#[allow(dead_code)]
 #[derive(Debug)]
-enum ElementValue {
+pub enum ElementValue {
     ConstValueIndex(u16),
     EnumConstantValue {
         type_name_index: u16,
@@ -488,8 +634,9 @@ enum ElementValue {
     },
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct LocalVariableTypeTableEntry {
+pub struct LocalVariableTypeTableEntry {
     start_pc: u16,
     length: u16,
     name_index: u16,
@@ -497,8 +644,9 @@ struct LocalVariableTypeTableEntry {
     index: u16,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct LocalVariableTableEntry {
+pub struct LocalVariableTableEntry {
     start_pc: u16,
     length: u16,
     name_index: u16,
@@ -506,22 +654,25 @@ struct LocalVariableTableEntry {
     index: u16,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct LineNumberTableEntry {
+pub struct LineNumberTableEntry {
     start_pc: u16,
     line_number: u16,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-struct InnerClassInfo {
+pub struct InnerClassInfo {
     inner_class_info_index: u16,
     outer_class_info_index: u16,
     inner_name_index: u16,
     inner_class_access_flags: u16,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
-enum StackMapFrame {
+pub enum StackMapFrame {
     SameFrame,
     SameLocals1StackItemFrame,
     SameLocals1StackItemFrameExtended,
@@ -531,6 +682,7 @@ enum StackMapFrame {
     FullFrame,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ExceptionTable {
     start_pc: u16,
