@@ -1,12 +1,12 @@
 use crate::error::DecompileError;
 use crate::error::DecompileError::{InvalidMagicNumber, NoSuchFile};
 use crate::types::{
-    Attribute, ClassFile, ConstantPoolType, CpInfo, FieldAccessFlags, FieldInfo, MethodAccessFlags,
-    MethodInfo,
+    Attribute, ClassFile, ConstantPoolType, CpInfo, ExceptionTable, FieldInfo, InnerClassInfo,
+    LineNumberTableEntry, MethodInfo, MethodParameter,
 };
 use log::{debug, trace};
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek};
 use std::path::PathBuf;
 
 const CAFE_BABE: u32 = 0xCAFE_BABE;
@@ -45,18 +45,19 @@ impl Decompile {
             class_file.major_version, class_file.minor_version
         );
 
-        class_file.constant_pool_count = read_u16(&mut reader);
+        let constant_pool_count = read_u16(&mut reader);
 
-        debug!("constant pool count: {}", class_file.constant_pool_count);
+        debug!("constant pool count: {}", constant_pool_count);
 
-        for _ in 0..class_file.constant_pool_count - 1 {
+        for _ in 0..constant_pool_count - 2 {
+            let pos = reader.stream_position()?;
             let cp_info_tag = read_u8(&mut reader);
             let cp_info_type = match cp_info_tag {
-                1 => utf8(&mut reader)?,
-                3 => integer(&mut reader)?,
-                4 => float(&mut reader)?,
-                5 => long(&mut reader)?,
-                6 => double(&mut reader)?,
+                1 => cp_utf8(&mut reader)?,
+                3 => cp_integer(&mut reader)?,
+                4 => cp_float(&mut reader)?,
+                5 => cp_long(&mut reader)?,
+                6 => cp_double(&mut reader)?,
                 7 => ConstantPoolType::ConstantClass {
                     name_idx: read_u16(&mut reader),
                 },
@@ -101,8 +102,8 @@ impl Decompile {
                     name_idx: read_u16(&mut reader),
                 },
                 _ => {
-                    debug!("class_file: {class_file}");
-                    return Err(DecompileError::InvalidClassPoolTag(cp_info_tag));
+                    debug!("class_file:\n{class_file}");
+                    return Err(DecompileError::InvalidConstantPoolTag(cp_info_tag, pos));
                 }
             };
 
@@ -110,8 +111,6 @@ impl Decompile {
                 tag: cp_info_tag,
                 info: Some(cp_info_type),
             };
-
-            debug!("adding {:?}", info);
 
             class_file.add_constant_pool_entry(info);
         }
@@ -122,31 +121,39 @@ impl Decompile {
         );
 
         class_file.access_flags = read_u16(&mut reader);
+        debug!("access_flags: {:#x}", class_file.access_flags);
 
         class_file.this_class = read_u16(&mut reader);
+        debug!("this_class idx: {}", class_file.this_class);
 
         class_file.super_class = read_u16(&mut reader);
+        debug!("super_class idx: {}", class_file.super_class);
 
         class_file.interfaces_count = read_u16(&mut reader);
+        debug!("interfaces_count: {}", class_file.interfaces_count);
 
         for _ in 0..class_file.interfaces_count {
-            class_file.interfaces.push(read_u8(&mut reader));
+            let value = read_u8(&mut reader);
+            debug!("interface idx: {value}");
+            class_file.interfaces.push(value);
         }
 
         class_file.fields_count = read_u16(&mut reader);
+        debug!("fields_count: {}", class_file.fields_count);
 
         for _ in 0..class_file.fields_count {
-            class_file
-                .fields
-                .push(read_field_info(&mut reader, &class_file));
+            let field_info = read_field_info(&mut reader, &class_file)?;
+            debug!("adding {:?}", field_info);
+            class_file.fields.push(field_info);
         }
 
         class_file.methods_count = read_u16(&mut reader);
+        debug!("methods_count: {}", class_file.methods_count);
 
         for _ in 0..class_file.methods_count {
-            class_file
-                .methods
-                .push(read_method_info(&mut reader, &class_file));
+            let method_info = read_method_info(&mut reader, &class_file)?;
+            debug!("adding {:?}", method_info);
+            class_file.methods.push(method_info);
         }
 
         trace!("class file: {:?}", class_file);
@@ -160,18 +167,19 @@ impl Decompile {
     }
 }
 
-fn utf8(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
-    trace!("utf8()");
+fn cp_utf8(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
+    trace!("cp_utf8()");
 
     let len = read_u16(reader);
     let bytes = read_variable(reader, len as usize);
+    debug!("utf8: len({len}) bytes: {:x?}", bytes);
     let value = std::str::from_utf8(&bytes).unwrap().to_string();
 
     Ok(ConstantPoolType::ConstantUtf8 { len, value })
 }
 
-fn integer(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
-    trace!("integer()");
+fn cp_integer(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
+    trace!("cp_integer()");
     let mut buf = [0u8; 4];
     reader.read_exact(&mut buf)?;
     let value = i32::from_be_bytes(buf);
@@ -179,8 +187,8 @@ fn integer(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
     Ok(ConstantPoolType::ConstantInteger { value })
 }
 
-fn long(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
-    trace!("long()");
+fn cp_long(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
+    trace!("cp_long()");
     let mut buf = [0u8; 8];
     reader.read_exact(&mut buf)?;
     let value = i64::from_be_bytes(buf);
@@ -188,8 +196,8 @@ fn long(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
     Ok(ConstantPoolType::ConstantLong { value })
 }
 
-fn float(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
-    trace!("float()");
+fn cp_float(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
+    trace!("cp_float()");
     let mut buf = [0u8; 4];
     reader.read_exact(&mut buf)?;
     let value = f32::from_be_bytes(buf);
@@ -197,8 +205,8 @@ fn float(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
     Ok(ConstantPoolType::ConstantFloat { value })
 }
 
-fn double(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
-    trace!("double()");
+fn cp_double(reader: &mut BufReader<File>) -> DecompileResult<ConstantPoolType> {
+    trace!("cp_double()");
     let mut buf = [0u8; 8];
     reader.read_exact(&mut buf)?;
     let value = f64::from_be_bytes(buf);
@@ -234,104 +242,103 @@ fn read_variable(reader: &mut BufReader<File>, len: usize) -> Vec<u8> {
     buf
 }
 
-fn read_field_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> FieldInfo {
+fn read_field_info(
+    reader: &mut BufReader<File>,
+    class_file: &ClassFile,
+) -> DecompileResult<FieldInfo> {
     trace!("read_field_info()");
     let access_flags = read_u16(reader);
     let name_index = read_u16(reader);
     let descriptor_index = read_u16(reader);
-    let _attributes_count = read_u16(reader);
+    let attributes_count = read_u16(reader);
+    debug!("field_info: name_index {name_index} descriptor_index {descriptor_index} attributes_count {attributes_count}");
 
-    let field_name =
-        if let Some(name_info) = class_file.get_constant_pool_entry(name_index as usize) {
-            if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &name_info.info {
-                value.clone()
-            } else {
-                todo!("invalid class file error");
-            }
-        } else {
-            todo!("invalid class file error");
-        };
+    let field_name = resolve_utf8_cp_entry(reader, class_file, name_index)?;
+    debug!("resolved field name: {field_name}");
+    let field_descriptor = resolve_utf8_cp_entry(reader, class_file, descriptor_index)?;
+    debug!("resolved descriptor: {field_descriptor}");
 
-    let field_descriptor =
-        if let Some(desc_info) = class_file.get_constant_pool_entry(descriptor_index as usize) {
-            if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &desc_info.info {
-                value.clone()
-            } else {
-                todo!("invalid class file error");
-            }
-        } else {
-            todo!("invalid class file error");
-        };
-
-    let (attribute_name_index, attribute_length, constant_value_index) =
-        (read_u16(reader), read_u32(reader), read_u16(reader));
-
-    // attribute_length
-    //     The value of the attribute_length item must be two.
-    assert_eq!(attribute_length, 2);
-
-    // attribute_name_index
-    //     The value of the attribute_name_index item must be a valid index into the constant_pool table.
-    //     The constant_pool entry at that index must be a CONSTANT_Utf8_info structure (§4.4.7)
-    //     representing the string "ConstantValue".
-    let constant_value =
-        if let Some(cp_info) = class_file.get_constant_pool_entry(attribute_name_index as usize) {
-            if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &cp_info.info {
-                value.clone()
-            } else {
-                todo!("invalid class file error");
-            }
-        } else {
-            todo!("invalid class file error");
-        };
-
-    assert_eq!(constant_value, "ConstantValue".to_string());
-
-    // constantvalue_index
-    //     The value of the constantvalue_index item must be a valid index into the constant_pool
-    //     table. The constant_pool entry at that index gives the value represented by this attribute.
-    //     The constant_pool entry must be of a type appropriate to the field,
-    let value =
-        if let Some(cp_info) = &class_file.get_constant_pool_entry(constant_value_index as usize) {
-            // TODO: validate type against descriptor
-            match &cp_info.info {
-                Some(ConstantPoolType::ConstantDouble { value }) => format!("{value}"),
-                Some(ConstantPoolType::ConstantFloat { value }) => format!("{value}"),
-                Some(ConstantPoolType::ConstantLong { value }) => format!("{value}"),
-                Some(ConstantPoolType::ConstantInteger { value }) => format!("{value}"),
-                Some(ConstantPoolType::ConstantString { string_idx }) => {
-                    if let Some(info) = class_file.get_constant_pool_entry(*string_idx as usize) {
-                        if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &info.info {
-                            value.clone()
-                        } else {
-                            todo!("")
-                        }
-                    } else {
-                        todo!("")
-                    }
-                }
-                _ => todo!("invalid"),
-            }
-        } else {
-            todo!("")
-        };
-
-    // https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.7.2
-    // -->  There may be at most one ConstantValue attribute in the attributes table of a field_info structure.
-    FieldInfo {
+    let mut field_info = FieldInfo {
         access_flags,
         name: field_name,
         descriptor: field_descriptor,
-        value,
-        attributes: vec![Attribute::ConstantValue {
-            attribute_name_index,
-            attribute_length,
-            constant_value_index,
-        }],
+        value: None,
+        attributes: Vec::new(),
+    };
+
+    for _ in 0..attributes_count {
+        let attr = read_attribute_info(reader, class_file)?;
+        match attr {
+            Attribute::ConstantValue {
+                constant_value_index,
+                ..
+            } => {
+                // constantvalue_index
+                //     The value of the constantvalue_index item must be a valid index into the constant_pool
+                //     table. The constant_pool entry at that index gives the value represented by this attribute.
+                //     The constant_pool entry must be of a type appropriate to the field,
+
+                // TODO: check that the field is a static field
+                if field_info.value.is_some() {
+                    todo!("only one value allowed, so this is an error");
+                }
+
+                field_info.value = if let Some(cp_info) =
+                    &class_file.get_constant_pool_entry(constant_value_index as usize)
+                {
+                    match &cp_info.info {
+                        Some(ConstantPoolType::ConstantDouble { value }) => {
+                            Some(format!("{value}"))
+                        }
+                        Some(ConstantPoolType::ConstantFloat { value }) => Some(format!("{value}")),
+                        Some(ConstantPoolType::ConstantLong { value }) => Some(format!("{value}")),
+                        Some(ConstantPoolType::ConstantInteger { value }) => {
+                            Some(format!("{value}"))
+                        }
+                        Some(ConstantPoolType::ConstantString { string_idx }) => {
+                            if let Some(info) =
+                                class_file.get_constant_pool_entry(*string_idx as usize)
+                            {
+                                if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) =
+                                    &info.info
+                                {
+                                    Some(value.clone())
+                                } else {
+                                    return Err(DecompileError::InvalidUtf8ConstantPoolEntry(
+                                        *string_idx,
+                                    ));
+                                }
+                            } else {
+                                return Err(DecompileError::NoSuchConstantPoolEntry(
+                                    name_index,
+                                    reader.stream_position()?,
+                                ));
+                            }
+                        }
+                        _ => todo!("invalid field value type"),
+                    }
+                } else {
+                    return Err(DecompileError::NoSuchConstantPoolEntry(
+                        name_index,
+                        reader.stream_position()?,
+                    ));
+                };
+            }
+            // TODO: handle other attributes
+            _ => debug!("ignoring attribute {:?}", attr),
+        }
+
+        debug!("adding attribute {:?}", attr);
+        field_info.attributes.push(attr);
     }
+
+    Ok(field_info)
 }
 
-fn read_method_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> MethodInfo {
+fn read_method_info(
+    reader: &mut BufReader<File>,
+    class_file: &ClassFile,
+) -> DecompileResult<MethodInfo> {
     trace!("read_method_info()");
     let access_flags = read_u16(reader);
     let name_index = read_u16(reader);
@@ -349,19 +356,168 @@ fn read_method_info(reader: &mut BufReader<File>, class_file: &ClassFile) -> Met
     for _ in 0..attributes_count {
         method_info
             .attributes
-            .push(read_attribute_info(reader, class_file));
+            .push(read_attribute_info(reader, class_file)?);
     }
 
-    method_info
+    Ok(method_info)
 }
 
-fn read_attribute_info(reader: &mut BufReader<File>, _class_file: &ClassFile) -> Attribute {
+fn read_attribute_info(
+    reader: &mut BufReader<File>,
+    class_file: &ClassFile,
+) -> DecompileResult<Attribute> {
+    trace!("read_attribute_info()");
+
     let index = read_u16(reader);
     let length = read_u32(reader);
 
-    Attribute::ConstantValue {
-        attribute_name_index: index,
-        attribute_length: length,
-        constant_value_index: 0,
-    }
+    debug!("attr_info: index {index} len {length}");
+
+    let attr_name = resolve_utf8_cp_entry(reader, class_file, index)?;
+    debug!("resolved attr name: {attr_name}");
+
+    let attr = match attr_name.as_str() {
+        "ConstantValue" => {
+            // attribute_length
+            //     The value of the attribute_length item must be two.
+            assert_eq!(length, 2);
+            let constant_value_index = read_u16(reader);
+            Attribute::ConstantValue {
+                attribute_name_index: index,
+                attribute_length: length,
+                constant_value_index,
+            }
+        }
+        "Code" => {
+            let max_stack = read_u16(reader);
+            let max_locals = read_u16(reader);
+            let code_length = read_u32(reader);
+            let code = read_variable(reader, code_length as usize);
+            let exception_table_length = read_u16(reader);
+            let mut exception_table = Vec::with_capacity(exception_table_length as usize);
+            for _ in 0..exception_table_length {
+                exception_table.push(ExceptionTable {
+                    start_pc: read_u16(reader),
+                    end_pc: read_u16(reader),
+                    handler_pc: read_u16(reader),
+                    catch_type: read_u16(reader),
+                })
+            }
+            let attributes_count = read_u16(reader);
+            let mut attributes = Vec::with_capacity(attributes_count as usize);
+            for _ in 0..attributes_count {
+                attributes.push(read_attribute_info(reader, class_file)?);
+            }
+            Attribute::Code {
+                attribute_name_index: index,
+                attribute_length: length,
+                max_stack,
+                max_locals,
+                code_length,
+                code,
+                exception_table_length,
+                exception_table,
+                attributes_count,
+                attributes,
+            }
+        }
+        "LineNumberTable" => {
+            let line_number_table_length = read_u16(reader);
+            let mut line_number_table = Vec::with_capacity(line_number_table_length as usize);
+            for _ in 0..line_number_table_length {
+                line_number_table.push(LineNumberTableEntry {
+                    start_pc: read_u16(reader),
+                    line_number: read_u16(reader),
+                });
+            }
+
+            Attribute::LineNumberTable {
+                attribute_name_index: index,
+                attribute_length: length,
+                line_number_table_length,
+                line_number_table,
+            }
+        }
+        "SourceFile" => Attribute::SourceFile {
+            attribute_name_index: index,
+            attribute_length: length,
+            sourcefile_index: read_u16(reader),
+        },
+        "MethodParameters" => {
+            let parameters_count = read_u8(reader);
+            let mut parameters = Vec::with_capacity(parameters_count as usize);
+            for _ in 0..parameters_count {
+                parameters.push(MethodParameter {
+                    name_index: read_u16(reader),
+                    access_flags: read_u16(reader),
+                });
+            }
+            Attribute::MethodParameters {
+                attribute_name_index: index,
+                attribute_length: length,
+                parameters_count,
+                parameters,
+            }
+        }
+        "InnerClasses" => {
+            let number_of_classes = read_u16(reader);
+            let mut classes = Vec::with_capacity(number_of_classes as usize);
+            for _ in 0..number_of_classes {
+                classes.push(InnerClassInfo {
+                    inner_class_info_index: read_u16(reader),
+                    outer_class_info_index: read_u16(reader),
+                    inner_name_index: read_u16(reader),
+                    inner_class_access_flags: read_u16(reader),
+                })
+            }
+            Attribute::InnerClasses {
+                attribute_name_index: index,
+                attribute_length: length,
+                number_of_classes,
+                classes,
+            }
+        }
+        // "StackMapTable" => {}
+        // "Exceptions" => {}
+        // "EnclosingMethod" => {}
+        // "Synthetic" => {}
+        // "Signature" => {}
+        // "SourceDebugExtension" => {}
+        // "LocalVariableTable" => {}
+        // "LocalVariableTypeTable" => {}
+        // "Deprecated" => {}
+        // "Module" => {}
+        // "ModulePackages" => {}
+        // "ModuleMainClass" => {}
+        // "Record" => {}
+        // "PermittedSubclasses" => {}
+        _ => todo!("ignoring {attr_name} for now"),
+    };
+
+    debug!("adding attr: {:?}", attr);
+
+    Ok(attr)
+}
+
+fn resolve_utf8_cp_entry(
+    reader: &mut BufReader<File>,
+    class_file: &ClassFile,
+    index: u16,
+) -> DecompileResult<String> {
+    let value = if let Some(cp_info) = class_file.get_constant_pool_entry(index as usize) {
+        if let Some(ConstantPoolType::ConstantUtf8 { value, len: _ }) = &cp_info.info {
+            value.clone()
+        } else {
+            return Err(DecompileError::InvalidUtf8ConstantPoolEntry(index));
+        }
+    } else {
+        return Err(DecompileError::NoSuchConstantPoolEntry(
+            index,
+            reader.stream_position()?,
+        ));
+    };
+
+    debug!("resolved utf8 entry: {value}");
+
+    Ok(value)
 }

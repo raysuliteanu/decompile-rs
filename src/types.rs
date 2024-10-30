@@ -1,6 +1,8 @@
 use std::fmt::Display;
 use std::fmt::Write;
 
+use log::debug;
+
 /// see https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.1
 #[allow(dead_code)]
 #[derive(Debug, Default)]
@@ -8,8 +10,9 @@ pub struct ClassFile {
     pub magic: u32,
     pub major_version: u16,
     pub minor_version: u16,
-    pub constant_pool_count: u16,
+
     constant_pool: ConstantPool,
+
     pub access_flags: u16,
     pub this_class: u16,
     pub super_class: u16,
@@ -25,6 +28,12 @@ pub struct ClassFile {
 
 #[derive(Debug, Default)]
 pub struct ConstantPool {
+    // The value of the constant_pool_count item is equal to the number of
+    // entries in the constant_pool table plus one. A constant_pool index is
+    // considered valid if it is greater than zero and less than
+    // constant_pool_count, with the exception for constants of type long and
+    // double noted in
+    // https://docs.oracle.com/javase/specs/jvms/se23/html/jvms-4.html#jvms-4.4.5
     cp_info: Vec<CpInfo>,
 }
 
@@ -49,7 +58,7 @@ impl Display for ConstantPool {
             .iter()
             .enumerate()
             .fold(String::new(), |mut s, (i, v)| {
-                let _ = writeln!(s, "idx: {} entry: {{ {v} }}", i + 1);
+                let _ = writeln!(s, "idx: {:0>2} entry: {{ {v} }}", i + 1);
                 s
             });
 
@@ -66,6 +75,7 @@ impl ClassFile {
     }
 
     pub(crate) fn add_constant_pool_entry(&mut self, cp_info: CpInfo) {
+        debug!("adding {:?} at {}", cp_info, self.constant_pool.len() + 1);
         self.constant_pool.push(cp_info);
     }
 
@@ -84,9 +94,9 @@ impl ClassFile {
 impl Display for ClassFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "magic: {:x}\nversion: {}.{}\ncp_count: {}\ncp: [\n{}\n]\naccess_flags: {:x}\nthis_class: {}",
-            self.magic, self.major_version, self.minor_version, self.constant_pool_count, self.constant_pool, self.access_flags, self.this_class
+            self.magic, self.major_version, self.minor_version, self.constant_pool.len(), self.constant_pool, self.access_flags, self.this_class
         )?;
-        writeln!(f, "")
+        writeln!(f)
     }
 }
 
@@ -158,29 +168,29 @@ pub enum ConstantPoolType {
 impl Display for ConstantPoolType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConstantPoolType::ConstantClass { name_idx } => write!(f, "Class: {name_idx}"),
+            ConstantPoolType::ConstantClass { name_idx } => write!(f, "Class: ({name_idx})"),
             ConstantPoolType::ConstantFieldRef {
                 class_index,
                 name_and_type_idx,
             } => write!(
                 f,
-                "FieldRef: class {class_index}\tname_and_type: {name_and_type_idx}"
+                "FieldRef: class({class_index}) name_and_type({name_and_type_idx})"
             ),
             ConstantPoolType::ConstantMethodRef {
                 class_index,
                 name_and_type_idx,
             } => write!(
                 f,
-                "MethodRef: class {class_index}\tname_and_type: {name_and_type_idx}"
+                "MethodRef: class({class_index}) name_and_type({name_and_type_idx})"
             ),
             ConstantPoolType::ConstantInterfaceMethodRef {
                 class_index,
                 name_and_type_idx,
             } => write!(
                 f,
-                "InterfaceMethodRef: class {class_index}\tname_and_type: {name_and_type_idx}"
+                "InterfaceMethodRef: class({class_index}) name_and_type({name_and_type_idx})"
             ),
-            ConstantPoolType::ConstantString { string_idx } => write!(f, "String: {string_idx}"),
+            ConstantPoolType::ConstantString { string_idx } => write!(f, "String: ({string_idx})"),
             ConstantPoolType::ConstantInteger { value } => write!(f, "Integer: {value}"),
             ConstantPoolType::ConstantFloat { value } => write!(f, "Float: {value}"),
             ConstantPoolType::ConstantLong { value } => write!(f, "Long: {value}"),
@@ -192,7 +202,7 @@ impl Display for ConstantPoolType {
                 write!(f, "Utf8: len({len}) value(\"{value}\")")
             }
             ConstantPoolType::ConstantMethodHandle { ref_kind, ref_idx } => {
-                write!(f, "MethodHandle: kind({ref_kind}) idx({ref_idx}")
+                write!(f, "MethodHandle: ref_kind({ref_kind}) ref_idx({ref_idx}")
             }
             ConstantPoolType::ConstantMethodType { desc_idx } => {
                 write!(f, "MethodType: desc({desc_idx})")
@@ -205,8 +215,8 @@ impl Display for ConstantPoolType {
                 bootstrap_method_attr_index,
                 name_and_type_index,
             } => write!(f, "InvokeDynamic: bootstrap_method_attr({bootstrap_method_attr_index}) name_and_type({name_and_type_index})"),
-            ConstantPoolType::ConstantModule { name_idx } => write!(f, "Module: {name_idx}"),
-            ConstantPoolType::ConstantPackage { name_idx } => write!(f, "Package: {name_idx}"),
+            ConstantPoolType::ConstantModule { name_idx } => write!(f, "Module: ({name_idx})"),
+            ConstantPoolType::ConstantPackage { name_idx } => write!(f, "Package: ({name_idx})"),
         }
     }
 }
@@ -226,7 +236,7 @@ impl Display for CpInfo {
             "None".to_string()
         };
 
-        write!(f, "tag: {} info: {{ {info} }}", self.tag)
+        write!(f, "tag: {:0>2} info: {{ {info} }}", self.tag)
     }
 }
 
@@ -245,7 +255,7 @@ pub struct FieldInfo {
     */
     pub name: String,
     pub descriptor: String,
-    pub value: String,
+    pub value: Option<String>,
     pub attributes: Vec<Attribute>,
 }
 
@@ -485,6 +495,14 @@ pub enum Attribute {
     },
 }
 
+impl From<String> for Attribute {
+    fn from(value: String) -> Self {
+        match value {
+            _ => panic!("invalid attribute name"),
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct RecordComponentInfo {
@@ -531,8 +549,8 @@ pub struct ModuleExport {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct MethodParameter {
-    name_index: u16,
-    access_flags: u16,
+    pub name_index: u16,
+    pub access_flags: u16,
 }
 
 #[allow(dead_code)]
@@ -657,17 +675,17 @@ pub struct LocalVariableTableEntry {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct LineNumberTableEntry {
-    start_pc: u16,
-    line_number: u16,
+    pub(crate) start_pc: u16,
+    pub(crate) line_number: u16,
 }
 
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct InnerClassInfo {
-    inner_class_info_index: u16,
-    outer_class_info_index: u16,
-    inner_name_index: u16,
-    inner_class_access_flags: u16,
+    pub inner_class_info_index: u16,
+    pub outer_class_info_index: u16,
+    pub inner_name_index: u16,
+    pub inner_class_access_flags: u16,
 }
 
 #[allow(dead_code)]
@@ -685,8 +703,8 @@ pub enum StackMapFrame {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct ExceptionTable {
-    start_pc: u16,
-    end_pc: u16,
-    handler_pc: u16,
-    catch_type: u16,
+    pub start_pc: u16,
+    pub end_pc: u16,
+    pub handler_pc: u16,
+    pub catch_type: u16,
 }
